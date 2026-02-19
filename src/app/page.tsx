@@ -1,6 +1,7 @@
 "use client";
 
 import * as THREE from "three";
+import React, { useEffect, useMemo, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import {
   Environment,
@@ -12,10 +13,77 @@ import {
   PerspectiveCamera,
   Center,
 } from "@react-three/drei";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 export default function Home() {
+  const [fileUrl, setFileUrl] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [showVertices, setShowVertices] = useState(true);
+
+  useEffect(() => {
+    const onDragOver = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    };
+
+    const onDrop = (e) => {
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+
+      const lower = file.name.toLowerCase();
+      if (!lower.endsWith(".glb") && !lower.endsWith(".gltf")) return;
+
+      const url = URL.createObjectURL(file);
+      setFileName(file.name);
+      setFileUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return url;
+      });
+    };
+
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, []);
+
   return (
     <div style={{ width: "100%", height: "100vh", background: "#2b2b2b" }}>
+      {/* HUD */}
+      <div
+        style={{
+          position: "absolute",
+          top: 12,
+          left: 12,
+          zIndex: 10,
+          padding: "10px 12px",
+          borderRadius: 10,
+          background: "rgba(0,0,0,0.45)",
+          color: "white",
+          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
+          fontSize: 13,
+          pointerEvents: "auto",
+          userSelect: "none",
+        }}
+      >
+        <div style={{ fontWeight: 700 }}>drag & drop .glb/.gltf</div>
+        <div style={{ opacity: 0.85, marginBottom: 8 }}>
+          {fileUrl ? `loaded: ${fileName}` : "no model loaded yet"}
+        </div>
+
+        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="checkbox"
+            checked={showVertices}
+            onChange={(e) => setShowVertices(e.target.checked)}
+          />
+          <span>show vertices</span>
+        </label>
+      </div>
+
       <Canvas
         shadows
         gl={{
@@ -27,31 +95,24 @@ export default function Home() {
         }}
         dpr={[1, 2]}
       >
-        {/* Camera like a comfortable viewport framing */}
         <PerspectiveCamera makeDefault position={[3.2, 2.2, 3.2]} fov={45} />
-
-        {/* Blender-ish neutral world */}
         <color attach="background" args={["#2e2f31"]} />
         <fog attach="fog" args={["#2e2f31", 12, 40]} />
 
-        {/* Key / fill / rim (soft, neutral) */}
         <Lights />
 
-        {/* Floor grid (Blender vibe) */}
         <Grid
           infiniteGrid
-          fadeDistance={40}
+          fadeDistance={18}
           fadeStrength={1.2}
           cellSize={0.1}
           cellThickness={0.6}
           sectionSize={1}
           sectionThickness={1.25}
-          // Colors: subtle light lines on dark grey background
           cellColor={"#3f4146"}
           sectionColor={"#5a5d64"}
         />
 
-        {/* Soft "viewport" ground shadow */}
         <ContactShadows
           position={[0, 0, 0]}
           opacity={0.45}
@@ -62,26 +123,25 @@ export default function Home() {
           color="#000000"
         />
 
-        {/* A subtle studio environment to mimic viewport reflections */}
         <Environment preset="studio" intensity={0.7} />
 
-        {/* Put models here */}
-        <Showcase />
+        <Center position={[0, 0.9, 0]}>
+          {fileUrl ? (
+            <DroppedModel url={fileUrl} showVertices={showVertices} />
+          ) : (
+            <mesh castShadow receiveShadow>
+              <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
+              <meshStandardMaterial
+                color="#c9ccd2"
+                metalness={0.15}
+                roughness={0.35}
+              />
+            </mesh>
+          )}
+        </Center>
 
-        {/* Controls that feel like viewport orbit */}
-        <OrbitControls
-          makeDefault
-          enableDamping
-          dampingFactor={0.08}
-          rotateSpeed={0.6}
-          zoomSpeed={0.9}
-          panSpeed={0.7}
-          minDistance={0.6}
-          maxDistance={25}
-          // Blender-ish: no auto-rotate, allow panning
-        />
+        <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
 
-        {/* Small axis gizmo like viewport orientation widget */}
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport
             axisColors={["#ff4d4d", "#4dff4d", "#4da6ff"]}
@@ -96,7 +156,6 @@ export default function Home() {
 function Lights() {
   return (
     <>
-      {/* Soft key */}
       <directionalLight
         castShadow
         position={[4, 6, 3]}
@@ -110,32 +169,122 @@ function Lights() {
         shadow-camera-top={10}
         shadow-camera-bottom={-10}
       />
-
-      {/* Fill */}
       <directionalLight position={[-6, 3.5, -2]} intensity={1.0} />
-
-      {/* Rim-ish */}
       <directionalLight position={[0, 4, -8]} intensity={0.6} />
-
-      {/* Ambient base (Blender viewport has a gentle base light) */}
       <ambientLight intensity={0.25} />
     </>
   );
 }
 
-function Showcase() {
+function DroppedModel({ url, showVertices }) {
+  const loader = useMemo(() => new GLTFLoader(), []);
+  const [root, setRoot] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    loader.load(
+      url,
+      (gltf) => {
+        if (cancelled) return;
+
+        const scene = gltf.scene.clone(true);
+
+        // Enable shadows
+        scene.traverse((o) => {
+          if (o.isMesh) {
+            o.castShadow = true;
+            o.receiveShadow = true;
+          }
+        });
+
+        fitToUnit(scene, 1.6);
+        setRoot(scene);
+      },
+      undefined,
+      (err) => console.error("GLTF load error:", err),
+    );
+
+    return () => {
+      cancelled = true;
+    };
+  }, [url, loader]);
+
+  // Build vertex overlays once per loaded model
+  const vertexOverlays = useMemo(() => {
+    if (!root) return [];
+
+    const overlays = [];
+
+    root.updateWorldMatrix(true, true);
+
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      if (!o.geometry?.attributes?.position) return;
+
+      // Clone geometry (safe)
+      const geom = o.geometry.index
+        ? o.geometry.toNonIndexed()
+        : o.geometry.clone();
+
+      // Create points object
+      const points = new THREE.Points(
+        geom,
+        new THREE.PointsMaterial({
+          size: 0.02,
+          sizeAttenuation: true,
+          color: "#ff00ff",
+          depthWrite: false,
+        }),
+      );
+
+      // 🔥 THIS IS THE IMPORTANT PART
+      o.updateWorldMatrix(true, false);
+      points.applyMatrix4(o.matrixWorld);
+
+      overlays.push(<primitive key={o.uuid} object={points} />);
+    });
+
+    return overlays;
+  }, [root]);
+
+  if (!root) return null;
+
   return (
-    <Center position={[0, 0.9, 0]}>
-      {/* Replace this with your model(s).
-          Keep castShadow/receiveShadow on meshes for the viewport feel. */}
-      <mesh castShadow receiveShadow>
-        <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
-        <meshStandardMaterial
-          color="#c9ccd2"
-          metalness={0.15}
-          roughness={0.35}
-        />
-      </mesh>
-    </Center>
+    <group>
+      {/* shaded model */}
+      <primitive object={root} />
+
+      {/* vertex overlay */}
+      {showVertices && (
+        <group
+        // Parenting the points under this group makes them inherit transforms.
+        // Root is already transformed, so we render points in the same local space.
+        >
+          {vertexOverlays}
+        </group>
+      )}
+    </group>
   );
+}
+
+/**
+ * Centers object at origin, scales to target size, then puts on "floor" y=0.
+ */
+function fitToUnit(object3D, targetSize = 1.6) {
+  const box = new THREE.Box3().setFromObject(object3D);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const scale = targetSize / maxDim;
+
+  object3D.position.sub(center);
+  object3D.scale.setScalar(scale);
+
+  const box2 = new THREE.Box3().setFromObject(object3D);
+  const minY = box2.min.y;
+  object3D.position.y -= minY;
 }
