@@ -1,65 +1,141 @@
-import Image from "next/image";
+"use client";
+
+import * as THREE from "three";
+import { Canvas } from "@react-three/fiber";
+import {
+  Environment,
+  OrbitControls,
+  Grid,
+  ContactShadows,
+  GizmoHelper,
+  GizmoViewport,
+  PerspectiveCamera,
+  Center,
+} from "@react-three/drei";
 
 export default function Home() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div style={{ width: "100%", height: "100vh", background: "#2b2b2b" }}>
+      <Canvas
+        shadows
+        gl={{
+          antialias: true,
+          physicallyCorrectLights: true,
+          outputColorSpace: THREE.SRGBColorSpace,
+          toneMapping: THREE.ACESFilmicToneMapping,
+          toneMappingExposure: 1.0,
+        }}
+        dpr={[1, 2]}
+      >
+        {/* Camera like a comfortable viewport framing */}
+        <PerspectiveCamera makeDefault position={[3.2, 2.2, 3.2]} fov={45} />
+
+        {/* Blender-ish neutral world */}
+        <color attach="background" args={["#2e2f31"]} />
+        <fog attach="fog" args={["#2e2f31", 12, 40]} />
+
+        {/* Key / fill / rim (soft, neutral) */}
+        <Lights />
+
+        {/* Floor grid (Blender vibe) */}
+        <Grid
+          infiniteGrid
+          fadeDistance={40}
+          fadeStrength={1.2}
+          cellSize={0.1}
+          cellThickness={0.6}
+          sectionSize={1}
+          sectionThickness={1.25}
+          // Colors: subtle light lines on dark grey background
+          cellColor={"#3f4146"}
+          sectionColor={"#5a5d64"}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+
+        {/* Soft "viewport" ground shadow */}
+        <ContactShadows
+          position={[0, 0, 0]}
+          opacity={0.45}
+          scale={14}
+          blur={2.2}
+          far={12}
+          resolution={1024}
+          color="#000000"
+        />
+
+        {/* A subtle studio environment to mimic viewport reflections */}
+        <Environment preset="studio" intensity={0.7} />
+
+        {/* Put models here */}
+        <Showcase />
+
+        {/* Controls that feel like viewport orbit */}
+        <OrbitControls
+          makeDefault
+          enableDamping
+          dampingFactor={0.08}
+          rotateSpeed={0.6}
+          zoomSpeed={0.9}
+          panSpeed={0.7}
+          minDistance={0.6}
+          maxDistance={25}
+          // Blender-ish: no auto-rotate, allow panning
+        />
+
+        {/* Small axis gizmo like viewport orientation widget */}
+        <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+          <GizmoViewport
+            axisColors={["#ff4d4d", "#4dff4d", "#4da6ff"]}
+            labelColor="white"
+          />
+        </GizmoHelper>
+      </Canvas>
     </div>
+  );
+}
+
+function Lights() {
+  return (
+    <>
+      {/* Soft key */}
+      <directionalLight
+        castShadow
+        position={[4, 6, 3]}
+        intensity={2.2}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-camera-near={0.5}
+        shadow-camera-far={30}
+        shadow-camera-left={-10}
+        shadow-camera-right={10}
+        shadow-camera-top={10}
+        shadow-camera-bottom={-10}
+      />
+
+      {/* Fill */}
+      <directionalLight position={[-6, 3.5, -2]} intensity={1.0} />
+
+      {/* Rim-ish */}
+      <directionalLight position={[0, 4, -8]} intensity={0.6} />
+
+      {/* Ambient base (Blender viewport has a gentle base light) */}
+      <ambientLight intensity={0.25} />
+    </>
+  );
+}
+
+function Showcase() {
+  return (
+    <Center position={[0, 0.9, 0]}>
+      {/* Replace this with your model(s).
+          Keep castShadow/receiveShadow on meshes for the viewport feel. */}
+      <mesh castShadow receiveShadow>
+        <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
+        <meshStandardMaterial
+          color="#c9ccd2"
+          metalness={0.15}
+          roughness={0.35}
+        />
+      </mesh>
+    </Center>
   );
 }
