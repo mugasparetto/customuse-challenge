@@ -145,10 +145,16 @@ export default function BoxSelect({
         const picked: number[] = [];
         for (let i = 0; i < pos.count; i++) {
           tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+          tmp.applyMatrix4(entry.points.matrixWorld); // <-- important
           tmp.project(camera);
 
-          const sx = (tmp.x * 0.5 + 0.5) * size.width;
-          const sy = (-tmp.y * 0.5 + 0.5) * size.height;
+          const r =
+            baseRectRef.current ??
+            overlayRef.current?.getBoundingClientRect() ??
+            gl.domElement.getBoundingClientRect();
+
+          const sx = (tmp.x * 0.5 + 0.5) * r.width;
+          const sy = (-tmp.y * 0.5 + 0.5) * r.height;
 
           if (sx >= left && sx <= right && sy >= top && sy <= bottom)
             picked.push(i);
