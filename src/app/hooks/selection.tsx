@@ -4,8 +4,15 @@ import * as THREE from "three";
 type PointsEntry = {
   id: string;
   points: THREE.Points;
-  // setter that accepts either a value or an updater fn
+
+  // current selection access (so tools can read selection at drag time)
+  getSelected: () => number[];
+
+  // update selection
   setSelected: React.Dispatch<React.SetStateAction<number[]>>;
+
+  // move currently-selected vertices by a delta expressed in WORLD space
+  moveSelected: (deltaWorld: THREE.Vector3) => void;
 };
 
 type SelectionRegistry = {

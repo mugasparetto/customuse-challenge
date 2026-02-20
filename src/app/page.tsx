@@ -2,7 +2,7 @@
 
 import * as THREE from "three";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { Canvas, ThreeEvent } from "@react-three/fiber";
+import { Canvas, ThreeEvent, useFrame } from "@react-three/fiber";
 import {
   ContactShadows,
   Environment,
@@ -16,6 +16,7 @@ import {
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { SelectionProvider, useSelectionRegistry } from "./hooks/selection";
 import BoxSelect from "./components/box-select";
+import MoveSelected from "./components/move-selected";
 
 type LoadedRoot = THREE.Object3D | null;
 
@@ -192,6 +193,8 @@ export default function Viewer() {
             requireKey="b"
           />
 
+          <MoveSelected controlsRef={orbitRef} requireKey="g" />
+
           <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
             <GizmoViewport
               axisColors={["#ff4d4d", "#4dff4d", "#4da6ff"]}
@@ -284,7 +287,7 @@ function DroppedModel({ url }: { url: string }) {
           key={m.uuid}
           mesh={m}
           pointSize={0.02}
-          makeNonIndexed
+          makeNonIndexed={false}
           disableMeshRaycast
         />
       ))}
@@ -303,58 +306,46 @@ type Props = {
   disableMeshRaycast?: boolean;
 };
 
+type SVProps = {
+  mesh: THREE.Mesh;
+  pointSize?: number;
+  makeNonIndexed?: boolean;
+  /** If true, mesh won't intercept pointer events (so points get clicks) */
+  disableMeshRaycast?: boolean;
+};
+
 export function SelectableVertices({
   mesh,
-  pointSize = 0.008,
-  makeNonIndexed = true,
+  pointSize = 0.01,
+  makeNonIndexed = false,
   disableMeshRaycast = true,
-}: Props) {
+}: SVProps) {
   const pointsRef = useRef<THREE.Points | null>(null);
 
-  // ✅ render-driving state
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
-
-  const clearSelection = () => setSelectedIndices([]);
-
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") clearSelection();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  const selectedRef = useRef<number[]>([]);
+  const [posVersion, setPosVersion] = useState(0);
 
   useEffect(() => {
-    const onClear = () => clearSelection();
-    window.addEventListener("clear-vertex-selection", onClear);
-    return () => window.removeEventListener("clear-vertex-selection", onClear);
-  }, []);
+    selectedRef.current = selectedIndices;
+  }, [selectedIndices]);
 
-  const registry = useSelectionRegistry();
-
-  useEffect(() => {
-    if (!pointsRef.current) return;
-
-    const id = mesh.uuid; // stable enough for your case
-    const unregister = registry.register({
-      id,
-      points: pointsRef.current,
-      setSelected: setSelectedIndices,
-    });
-
-    return unregister;
-  }, [registry, mesh.uuid]);
-
-  // Build points geometry (world baked, constant color)
-  const pointsObj = useMemo(() => {
-    mesh.updateWorldMatrix(true, false);
-
+  const editableGeometry = useMemo(() => {
     const src = mesh.geometry as THREE.BufferGeometry;
-    const g = makeNonIndexed && src.index ? src.toNonIndexed() : src.clone();
 
-    g.applyMatrix4(mesh.matrixWorld);
-    g.computeBoundingSphere();
+    // Convert to non-indexed ONLY if requested
+    if (makeNonIndexed && src.index) {
+      const nonIndexed = src.toNonIndexed();
+      mesh.geometry = nonIndexed;
+      return nonIndexed;
+    }
 
+    // Otherwise use the mesh's actual geometry reference
+    return src;
+  }, [mesh, makeNonIndexed]);
+
+  // 2) Magenta points using the same geometry reference
+  const pointsObj = useMemo(() => {
     const mat = new THREE.PointsMaterial({
       size: pointSize,
       sizeAttenuation: true,
@@ -365,13 +356,13 @@ export function SelectableVertices({
     });
     mat.toneMapped = false;
 
-    const pts = new THREE.Points(g, mat);
+    const pts = new THREE.Points(editableGeometry, mat);
     pts.frustumCulled = false;
-
+    pts.matrixAutoUpdate = true; // we set TRS, not raw matrix
     return pts;
-  }, [mesh, makeNonIndexed, pointSize]);
+  }, [editableGeometry, pointSize]);
 
-  // Disable mesh raycast so you can always click points
+  // 3) Optional: disable mesh raycast so clicks hit points
   useEffect(() => {
     if (!disableMeshRaycast) return;
     const oldRaycast = mesh.raycast;
@@ -382,93 +373,170 @@ export function SelectableVertices({
     };
   }, [mesh, disableMeshRaycast]);
 
-  const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
-    // ✅ ignore right/middle click
-    if (e.nativeEvent.button !== 0) return;
+  // 4) IMPORTANT: sync points to mesh in *parent space* (not world space)
+  useFrame(() => {
+    const pts = pointsRef.current;
+    if (!pts) return;
+    syncToTargetInParentSpace(pts, mesh);
+  });
 
+  const registry = useSelectionRegistry();
+
+  // 5) register in selection registry + implement deformation
+  useEffect(() => {
+    if (!pointsRef.current) return;
+
+    const unregister = registry.register({
+      id: mesh.uuid,
+      points: pointsRef.current,
+      setSelected: setSelectedIndices,
+      getSelected: () => selectedRef.current,
+
+      moveSelected: (deltaWorld: THREE.Vector3) => {
+        const geom = mesh.geometry as THREE.BufferGeometry;
+        const pos = geom.getAttribute("position") as THREE.BufferAttribute;
+        if (!pos) return;
+
+        // WORLD delta -> MESH LOCAL delta (direction-only)
+        mesh.updateWorldMatrix(true, false);
+        const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
+        const e = inv.elements;
+
+        const dx = deltaWorld.x,
+          dy = deltaWorld.y,
+          dz = deltaWorld.z;
+
+        const deltaLocal = new THREE.Vector3(
+          e[0] * dx + e[4] * dy + e[8] * dz,
+          e[1] * dx + e[5] * dy + e[9] * dz,
+          e[2] * dx + e[6] * dy + e[10] * dz,
+        );
+
+        const tmp = new THREE.Vector3();
+        for (const i of selectedRef.current) {
+          tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i)).add(deltaLocal);
+          pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
+        }
+
+        pos.needsUpdate = true;
+        geom.computeBoundingBox();
+        geom.computeBoundingSphere();
+        geom.computeVertexNormals();
+
+        setPosVersion((v) => v + 1);
+      },
+    });
+
+    return unregister;
+  }, [registry, mesh]);
+
+  // 6) click to select
+  const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (e.nativeEvent.button !== 0) return;
     e.stopPropagation();
+
     const idx = (e as any).index as number | undefined;
     if (idx == null) return;
 
     const multi = e.nativeEvent.shiftKey;
 
     setSelectedIndices((prev) => {
-      if (!multi) {
-        // ✅ single click replaces selection
-        return [idx];
-      }
-      // ✅ shift+click toggles
+      if (!multi) return [idx];
       if (prev.includes(idx)) return prev.filter((x) => x !== idx);
       return [...prev, idx];
     });
   };
 
+  // clear selection on global event (your page.tsx emits this)
+  useEffect(() => {
+    const onClear = () => setSelectedIndices([]);
+    window.addEventListener("clear-vertex-selection", onClear);
+    return () => window.removeEventListener("clear-vertex-selection", onClear);
+  }, []);
+
   return (
     <>
-      {/* pickable vertex cloud on layer 0 */}
       <primitive
+        ref={pointsRef as any}
         object={pointsObj}
-        ref={(o) => (pointsRef.current = o as unknown as THREE.Points)}
         onPointerDown={onPointerDown}
-        onUpdate={(o) => o.layers.set(0)}
       />
 
-      {/* visible overlay on layer 1 (not pickable) */}
       {pointsRef.current && selectedIndices.length > 0 && (
         <SelectedVertexOverlay
           sourcePoints={pointsRef.current}
           indices={selectedIndices}
           size={pointSize * 1.5}
+          posVersion={posVersion}
         />
       )}
     </>
   );
 }
 
-function SelectedVertexOverlay({
-  sourcePoints,
-  indices,
-  size,
-}: {
+type OverlayProps = {
   sourcePoints: THREE.Points;
   indices: number[];
   size: number;
-}) {
-  const geom = useMemo(() => {
+  /** increment this when base geometry positions change so overlay rebuilds */
+  posVersion?: number;
+};
+
+export function SelectedVertexOverlay({
+  sourcePoints,
+  indices,
+  size,
+  posVersion = 0,
+}: OverlayProps) {
+  const overlayRef = useRef<THREE.Points | null>(null);
+
+  const geom = useMemo(() => new THREE.BufferGeometry(), []);
+  const mat = useMemo(() => {
+    const m = new THREE.PointsMaterial({
+      size,
+      sizeAttenuation: true,
+      color: 0xffff00,
+      depthTest: true,
+      transparent: true,
+      opacity: 1,
+    });
+    m.toneMapped = false;
+    return m;
+  }, [size]);
+
+  // Build overlay positions in LOCAL space of sourcePoints.geometry
+  useEffect(() => {
     const srcGeom = sourcePoints.geometry as THREE.BufferGeometry;
     const pos = srcGeom.getAttribute("position") as THREE.BufferAttribute;
+    if (!pos) return;
 
-    const positions = new Float32Array(indices.length * 3);
-    for (let i = 0; i < indices.length; i++) {
-      const idx = indices[i];
-      positions[i * 3 + 0] = pos.getX(idx);
-      positions[i * 3 + 1] = pos.getY(idx);
-      positions[i * 3 + 2] = pos.getZ(idx);
+    const out = new Float32Array(indices.length * 3);
+    for (let k = 0; k < indices.length; k++) {
+      const i = indices[k];
+      out[k * 3 + 0] = pos.getX(i);
+      out[k * 3 + 1] = pos.getY(i);
+      out[k * 3 + 2] = pos.getZ(i);
     }
 
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    g.computeBoundingSphere();
-    return g;
-  }, [sourcePoints, indices]);
+    geom.setAttribute("position", new THREE.BufferAttribute(out, 3));
+    geom.attributes.position.needsUpdate = true;
+    geom.computeBoundingSphere();
+  }, [geom, sourcePoints, indices, posVersion]);
+
+  // Align overlay to sourcePoints in *parent space*
+  useFrame(() => {
+    const o = overlayRef.current;
+    if (!o) return;
+    syncToTargetInParentSpace(o, sourcePoints);
+  });
 
   return (
     <points
+      ref={overlayRef as any}
       geometry={geom}
+      material={mat}
       frustumCulled={false}
-      onUpdate={(o) => o.layers.set(1)}
-      raycast={() => null}
-    >
-      <pointsMaterial
-        size={size}
-        sizeAttenuation
-        color="#ffff00"
-        depthTest={false}
-        transparent
-        opacity={1}
-        toneMapped={false}
-      />
-    </points>
+    />
   );
 }
 
@@ -488,4 +556,25 @@ function fitToUnit(object3D: THREE.Object3D, targetSize = 1.6) {
   const box2 = new THREE.Box3().setFromObject(object3D);
   const minY = box2.min.y;
   object3D.position.y -= minY;
+}
+
+function syncToTargetInParentSpace(
+  obj: THREE.Object3D,
+  target: THREE.Object3D,
+) {
+  const parent = obj.parent;
+  if (!parent) return;
+
+  // Ensure matrices are current
+  parent.updateWorldMatrix(true, false);
+  target.updateWorldMatrix(true, false);
+
+  // localMatrix = inverse(parentWorld) * targetWorld
+  const invParent = new THREE.Matrix4().copy(parent.matrixWorld).invert();
+  const localMat = new THREE.Matrix4().multiplyMatrices(
+    invParent,
+    target.matrixWorld,
+  );
+
+  localMat.decompose(obj.position, obj.quaternion, obj.scale);
 }
