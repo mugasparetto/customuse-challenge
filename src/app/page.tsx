@@ -345,6 +345,9 @@ export function SelectableVertices({
   }, [mesh, disableMeshRaycast]);
 
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
+    // ✅ ignore right/middle click
+    if (e.nativeEvent.button !== 0) return;
+
     e.stopPropagation();
     const idx = (e as any).index as number | undefined;
     if (idx == null) return;
