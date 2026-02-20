@@ -14,12 +14,16 @@ import {
   Center,
 } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { SelectionProvider, useSelectionRegistry } from "./hooks/selection";
+import BoxSelect from "./components/box-select";
 
 type LoadedRoot = THREE.Object3D | null;
 
 export default function Viewer() {
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string>("");
+  const orbitRef = useRef<any>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   // Drag & drop handler
   useEffect(() => {
@@ -82,6 +86,16 @@ export default function Viewer() {
         </div>
       </div>
 
+      <div
+        ref={overlayRef}
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          zIndex: 50,
+        }}
+      />
+
       <Canvas
         shadows
         dpr={[1, 2]}
@@ -105,77 +119,86 @@ export default function Viewer() {
           window.dispatchEvent(new Event("clear-vertex-selection"));
         }}
       >
-        <PerspectiveCamera
-          makeDefault
-          position={[3.2, 2.2, 3.2]}
-          fov={45}
-          onUpdate={(cam) => {
-            cam.layers.enable(0);
-            cam.layers.enable(1); // <-- makes overlay visible again
-          }}
-        />
-
-        <color attach="background" args={["#2e2f31"]} />
-        <fog attach="fog" args={["#2e2f31", 12, 40]} />
-
-        <Lights />
-
-        <Grid
-          infiniteGrid
-          fadeDistance={18}
-          fadeStrength={1.2}
-          cellSize={0.1}
-          cellThickness={0.6}
-          sectionSize={1}
-          sectionThickness={1.25}
-          cellColor={"#3f4146"}
-          sectionColor={"#5a5d64"}
-        />
-
-        <ContactShadows
-          position={[0, 0, 0]}
-          opacity={0.45}
-          scale={14}
-          blur={2.2}
-          far={12}
-          resolution={1024}
-          color="#000000"
-        />
-
-        <Environment preset="studio" intensity={0.7} />
-
-        <Center position={[0, 0.9, 0]}>
-          {fileUrl ? (
-            <DroppedModel url={fileUrl} />
-          ) : (
-            <mesh castShadow receiveShadow>
-              <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
-              <meshStandardMaterial
-                color="#c9ccd2"
-                metalness={0.15}
-                roughness={0.35}
-              />
-            </mesh>
-          )}
-        </Center>
-
-        <OrbitControls
-          makeDefault
-          enableDamping
-          dampingFactor={0.08}
-          rotateSpeed={0.6}
-          zoomSpeed={0.9}
-          panSpeed={0.7}
-          minDistance={0.6}
-          maxDistance={25}
-        />
-
-        <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
-          <GizmoViewport
-            axisColors={["#ff4d4d", "#4dff4d", "#4da6ff"]}
-            labelColor="white"
+        <SelectionProvider>
+          <PerspectiveCamera
+            makeDefault
+            position={[3.2, 2.2, 3.2]}
+            fov={45}
+            onUpdate={(cam) => {
+              cam.layers.enable(0);
+              cam.layers.enable(1); // <-- makes overlay visible again
+            }}
           />
-        </GizmoHelper>
+
+          <color attach="background" args={["#2e2f31"]} />
+          <fog attach="fog" args={["#2e2f31", 12, 40]} />
+
+          <Lights />
+
+          <Grid
+            infiniteGrid
+            fadeDistance={18}
+            fadeStrength={1.2}
+            cellSize={0.1}
+            cellThickness={0.6}
+            sectionSize={1}
+            sectionThickness={1.25}
+            cellColor={"#3f4146"}
+            sectionColor={"#5a5d64"}
+          />
+
+          <ContactShadows
+            position={[0, 0, 0]}
+            opacity={0.45}
+            scale={14}
+            blur={2.2}
+            far={12}
+            resolution={1024}
+            color="#000000"
+          />
+
+          <Environment preset="studio" intensity={0.7} />
+
+          <Center position={[0, 0.9, 0]}>
+            {fileUrl ? (
+              <DroppedModel url={fileUrl} />
+            ) : (
+              <mesh castShadow receiveShadow>
+                <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
+                <meshStandardMaterial
+                  color="#c9ccd2"
+                  metalness={0.15}
+                  roughness={0.35}
+                />
+              </mesh>
+            )}
+          </Center>
+
+          <OrbitControls
+            ref={orbitRef}
+            makeDefault
+            enableDamping
+            dampingFactor={0.08}
+            rotateSpeed={0.6}
+            zoomSpeed={0.9}
+            panSpeed={0.7}
+            minDistance={0.6}
+            maxDistance={25}
+          />
+
+          <BoxSelect
+            controlsRef={orbitRef}
+            overlayRef={overlayRef}
+            requireKey="b"
+          />
+
+          <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
+            <GizmoViewport
+              axisColors={["#ff4d4d", "#4dff4d", "#4da6ff"]}
+              labelColor="white"
+            />
+          </GizmoHelper>
+        </SelectionProvider>
       </Canvas>
     </div>
   );
@@ -306,6 +329,21 @@ export function SelectableVertices({
     window.addEventListener("clear-vertex-selection", onClear);
     return () => window.removeEventListener("clear-vertex-selection", onClear);
   }, []);
+
+  const registry = useSelectionRegistry();
+
+  useEffect(() => {
+    if (!pointsRef.current) return;
+
+    const id = mesh.uuid; // stable enough for your case
+    const unregister = registry.register({
+      id,
+      points: pointsRef.current,
+      setSelected: setSelectedIndices,
+    });
+
+    return unregister;
+  }, [registry, mesh.uuid]);
 
   // Build points geometry (world baked, constant color)
   const pointsObj = useMemo(() => {
