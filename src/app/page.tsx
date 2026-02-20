@@ -1,38 +1,41 @@
 "use client";
 
 import * as THREE from "three";
-import React, { useEffect, useMemo, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { Canvas, ThreeEvent } from "@react-three/fiber";
 import {
-  Environment,
-  OrbitControls,
-  Grid,
   ContactShadows,
+  Environment,
   GizmoHelper,
   GizmoViewport,
+  Grid,
+  OrbitControls,
   PerspectiveCamera,
   Center,
 } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-export default function Home() {
-  const [fileUrl, setFileUrl] = useState(null);
-  const [fileName, setFileName] = useState("");
-  const [showVertices, setShowVertices] = useState(true);
+type LoadedRoot = THREE.Object3D | null;
 
+export default function Viewer() {
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string>("");
+
+  // Drag & drop handler
   useEffect(() => {
-    const onDragOver = (e) => {
+    const onDragOver = (e: DragEvent) => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
 
-    const onDrop = (e) => {
+    const onDrop = (e: DragEvent) => {
       e.preventDefault();
-      const file = e.dataTransfer.files?.[0];
+      const file = e.dataTransfer?.files?.[0];
       if (!file) return;
 
       const lower = file.name.toLowerCase();
-      if (!lower.endsWith(".glb") && !lower.endsWith(".gltf")) return;
+      const ok = lower.endsWith(".glb") || lower.endsWith(".gltf");
+      if (!ok) return;
 
       const url = URL.createObjectURL(file);
       setFileName(file.name);
@@ -74,18 +77,14 @@ export default function Home() {
           {fileUrl ? `loaded: ${fileName}` : "no model loaded yet"}
         </div>
 
-        <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="checkbox"
-            checked={showVertices}
-            onChange={(e) => setShowVertices(e.target.checked)}
-          />
-          <span>show vertices</span>
-        </label>
+        <div style={{ opacity: 0.7, marginTop: 6 }}>
+          click = select • shift+click = multi
+        </div>
       </div>
 
       <Canvas
         shadows
+        dpr={[1, 2]}
         gl={{
           antialias: true,
           physicallyCorrectLights: true,
@@ -93,9 +92,29 @@ export default function Home() {
           toneMapping: THREE.ACESFilmicToneMapping,
           toneMappingExposure: 1.0,
         }}
-        dpr={[1, 2]}
+        onCreated={({ raycaster }) => {
+          // Only pick objects on layer 0
+          raycaster.layers.set(0);
+
+          // Helps clicking small vertices
+          raycaster.params.Points = raycaster.params.Points ?? {};
+          (raycaster.params.Points as any).threshold = 0.02;
+        }}
+        onPointerMissed={() => {
+          // we'll trigger a custom DOM event so every vertex component clears
+          window.dispatchEvent(new Event("clear-vertex-selection"));
+        }}
       >
-        <PerspectiveCamera makeDefault position={[3.2, 2.2, 3.2]} fov={45} />
+        <PerspectiveCamera
+          makeDefault
+          position={[3.2, 2.2, 3.2]}
+          fov={45}
+          onUpdate={(cam) => {
+            cam.layers.enable(0);
+            cam.layers.enable(1); // <-- makes overlay visible again
+          }}
+        />
+
         <color attach="background" args={["#2e2f31"]} />
         <fog attach="fog" args={["#2e2f31", 12, 40]} />
 
@@ -127,7 +146,7 @@ export default function Home() {
 
         <Center position={[0, 0.9, 0]}>
           {fileUrl ? (
-            <DroppedModel url={fileUrl} showVertices={showVertices} />
+            <DroppedModel url={fileUrl} />
           ) : (
             <mesh castShadow receiveShadow>
               <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
@@ -140,7 +159,16 @@ export default function Home() {
           )}
         </Center>
 
-        <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
+        <OrbitControls
+          makeDefault
+          enableDamping
+          dampingFactor={0.08}
+          rotateSpeed={0.6}
+          zoomSpeed={0.9}
+          panSpeed={0.7}
+          minDistance={0.6}
+          maxDistance={25}
+        />
 
         <GizmoHelper alignment="bottom-right" margin={[80, 80]}>
           <GizmoViewport
@@ -176,9 +204,9 @@ function Lights() {
   );
 }
 
-function DroppedModel({ url, showVertices }) {
+function DroppedModel({ url }: { url: string }) {
   const loader = useMemo(() => new GLTFLoader(), []);
-  const [root, setRoot] = useState(null);
+  const [root, setRoot] = useState<LoadedRoot>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -190,11 +218,11 @@ function DroppedModel({ url, showVertices }) {
 
         const scene = gltf.scene.clone(true);
 
-        // Enable shadows
         scene.traverse((o) => {
-          if (o.isMesh) {
-            o.castShadow = true;
-            o.receiveShadow = true;
+          if ((o as THREE.Mesh).isMesh) {
+            const m = o as THREE.Mesh;
+            m.castShadow = true;
+            m.receiveShadow = true;
           }
         });
 
@@ -210,68 +238,200 @@ function DroppedModel({ url, showVertices }) {
     };
   }, [url, loader]);
 
-  // Build vertex overlays once per loaded model
-  const vertexOverlays = useMemo(() => {
+  const meshes = useMemo(() => {
     if (!root) return [];
-
-    const overlays = [];
-
+    const arr: THREE.Mesh[] = [];
     root.updateWorldMatrix(true, true);
-
     root.traverse((o) => {
-      if (!o.isMesh) return;
-      if (!o.geometry?.attributes?.position) return;
-
-      // Clone geometry (safe)
-      const geom = o.geometry.index
-        ? o.geometry.toNonIndexed()
-        : o.geometry.clone();
-
-      // Create points object
-      const points = new THREE.Points(
-        geom,
-        new THREE.PointsMaterial({
-          size: 0.02,
-          sizeAttenuation: true,
-          color: "#ff00ff",
-          depthWrite: false,
-        }),
-      );
-
-      // 🔥 THIS IS THE IMPORTANT PART
-      o.updateWorldMatrix(true, false);
-      points.applyMatrix4(o.matrixWorld);
-
-      overlays.push(<primitive key={o.uuid} object={points} />);
+      if ((o as THREE.Mesh).isMesh) {
+        const m = o as THREE.Mesh;
+        if (m.geometry?.attributes?.position) arr.push(m);
+      }
     });
-
-    return overlays;
+    return arr;
   }, [root]);
 
   if (!root) return null;
 
   return (
     <group>
-      {/* shaded model */}
       <primitive object={root} />
-
-      {/* vertex overlay */}
-      {showVertices && (
-        <group
-        // Parenting the points under this group makes them inherit transforms.
-        // Root is already transformed, so we render points in the same local space.
-        >
-          {vertexOverlays}
-        </group>
-      )}
+      {meshes.map((m) => (
+        <SelectableVertices
+          key={m.uuid}
+          mesh={m}
+          pointSize={0.02}
+          makeNonIndexed
+          disableMeshRaycast
+        />
+      ))}
     </group>
   );
 }
 
-/**
- * Centers object at origin, scales to target size, then puts on "floor" y=0.
- */
-function fitToUnit(object3D, targetSize = 1.6) {
+type Props = {
+  mesh: THREE.Mesh;
+  pointSize?: number;
+  makeNonIndexed?: boolean;
+  // colors
+  baseColor?: THREE.ColorRepresentation;
+  selectedColor?: THREE.ColorRepresentation;
+  // if true, disables raycast on the original mesh so you always pick points
+  disableMeshRaycast?: boolean;
+};
+
+export function SelectableVertices({
+  mesh,
+  pointSize = 0.008,
+  makeNonIndexed = true,
+  disableMeshRaycast = true,
+}: Props) {
+  const pointsRef = useRef<THREE.Points | null>(null);
+
+  // ✅ render-driving state
+  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
+
+  const clearSelection = () => setSelectedIndices([]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") clearSelection();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    const onClear = () => clearSelection();
+    window.addEventListener("clear-vertex-selection", onClear);
+    return () => window.removeEventListener("clear-vertex-selection", onClear);
+  }, []);
+
+  // Build points geometry (world baked, constant color)
+  const pointsObj = useMemo(() => {
+    mesh.updateWorldMatrix(true, false);
+
+    const src = mesh.geometry as THREE.BufferGeometry;
+    const g = makeNonIndexed && src.index ? src.toNonIndexed() : src.clone();
+
+    g.applyMatrix4(mesh.matrixWorld);
+    g.computeBoundingSphere();
+
+    const mat = new THREE.PointsMaterial({
+      size: pointSize,
+      sizeAttenuation: true,
+      color: 0xff00ff,
+      depthTest: true,
+      transparent: true,
+      opacity: 0.95,
+    });
+    mat.toneMapped = false;
+
+    const pts = new THREE.Points(g, mat);
+    pts.frustumCulled = false;
+
+    return pts;
+  }, [mesh, makeNonIndexed, pointSize]);
+
+  // Disable mesh raycast so you can always click points
+  useEffect(() => {
+    if (!disableMeshRaycast) return;
+    const oldRaycast = mesh.raycast;
+    // @ts-expect-error
+    mesh.raycast = () => null;
+    return () => {
+      mesh.raycast = oldRaycast;
+    };
+  }, [mesh, disableMeshRaycast]);
+
+  const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
+    e.stopPropagation();
+    const idx = (e as any).index as number | undefined;
+    if (idx == null) return;
+
+    const multi = e.nativeEvent.shiftKey;
+
+    setSelectedIndices((prev) => {
+      if (!multi) {
+        // ✅ single click replaces selection
+        return [idx];
+      }
+      // ✅ shift+click toggles
+      if (prev.includes(idx)) return prev.filter((x) => x !== idx);
+      return [...prev, idx];
+    });
+  };
+
+  return (
+    <>
+      {/* pickable vertex cloud on layer 0 */}
+      <primitive
+        object={pointsObj}
+        ref={(o) => (pointsRef.current = o as unknown as THREE.Points)}
+        onPointerDown={onPointerDown}
+        onUpdate={(o) => o.layers.set(0)}
+      />
+
+      {/* visible overlay on layer 1 (not pickable) */}
+      {pointsRef.current && selectedIndices.length > 0 && (
+        <SelectedVertexOverlay
+          sourcePoints={pointsRef.current}
+          indices={selectedIndices}
+          size={pointSize * 1.5}
+        />
+      )}
+    </>
+  );
+}
+
+function SelectedVertexOverlay({
+  sourcePoints,
+  indices,
+  size,
+}: {
+  sourcePoints: THREE.Points;
+  indices: number[];
+  size: number;
+}) {
+  const geom = useMemo(() => {
+    const srcGeom = sourcePoints.geometry as THREE.BufferGeometry;
+    const pos = srcGeom.getAttribute("position") as THREE.BufferAttribute;
+
+    const positions = new Float32Array(indices.length * 3);
+    for (let i = 0; i < indices.length; i++) {
+      const idx = indices[i];
+      positions[i * 3 + 0] = pos.getX(idx);
+      positions[i * 3 + 1] = pos.getY(idx);
+      positions[i * 3 + 2] = pos.getZ(idx);
+    }
+
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    g.computeBoundingSphere();
+    return g;
+  }, [sourcePoints, indices]);
+
+  return (
+    <points
+      geometry={geom}
+      frustumCulled={false}
+      onUpdate={(o) => o.layers.set(1)}
+      raycast={() => null}
+    >
+      <pointsMaterial
+        size={size}
+        sizeAttenuation
+        color="#ffff00"
+        depthTest={false}
+        transparent
+        opacity={1}
+        toneMapped={false}
+      />
+    </points>
+  );
+}
+
+function fitToUnit(object3D: THREE.Object3D, targetSize = 1.6) {
   const box = new THREE.Box3().setFromObject(object3D);
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
