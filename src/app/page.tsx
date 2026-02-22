@@ -61,40 +61,18 @@ export default function Viewer() {
   return (
     <div style={{ width: "100%", height: "100vh", background: "#2b2b2b" }}>
       {/* HUD */}
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 12,
-          zIndex: 10,
-          padding: "10px 12px",
-          borderRadius: 10,
-          background: "rgba(0,0,0,0.45)",
-          color: "white",
-          fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif",
-          fontSize: 13,
-          pointerEvents: "auto",
-          userSelect: "none",
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>drag & drop .glb/.gltf</div>
-        <div style={{ opacity: 0.85, marginBottom: 8 }}>
+      <div className="absolute top-3 left-3 z-10 p-3 rounded-lg bg-black/45 text-white text-sm font-sans pointer-events-auto user-select-none">
+        <span className="block">
+          <strong>drag & drop .glb/.gltf</strong>
+        </span>
+        <span className="block opacity-80">
           {fileUrl ? `loaded: ${fileName}` : "no model loaded yet"}
-        </div>
-
-        <div style={{ opacity: 0.7, marginTop: 6 }}>
-          click = select • shift+click = multi
-        </div>
+        </span>
       </div>
 
       <div
         ref={overlayRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          zIndex: 50,
-        }}
+        className="absolute inset-0 pointer-events-none z-50"
       />
 
       <Canvas
