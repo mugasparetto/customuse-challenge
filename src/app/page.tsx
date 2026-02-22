@@ -139,18 +139,7 @@ export default function Viewer() {
           <Environment preset="studio" intensity={0.7} />
 
           <Center position={[0, 0.9, 0]}>
-            {fileUrl ? (
-              <DroppedModel url={fileUrl} />
-            ) : (
-              <mesh castShadow receiveShadow>
-                <torusKnotGeometry args={[0.55, 0.18, 160, 18]} />
-                <meshStandardMaterial
-                  color="#c9ccd2"
-                  metalness={0.15}
-                  roughness={0.35}
-                />
-              </mesh>
-            )}
+            {fileUrl && <DroppedModel url={fileUrl} />}
           </Center>
 
           <OrbitControls
