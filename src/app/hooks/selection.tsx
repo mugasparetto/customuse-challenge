@@ -13,6 +13,14 @@ type PointsEntry = {
 
   // move currently-selected vertices by a delta expressed in WORLD space
   moveSelected: (deltaWorld: THREE.Vector3) => void;
+
+  beginMove?: (opts: {
+    pivotWorld: THREE.Vector3;
+    proportionalEnabled: boolean;
+    proportionalRadiusWorld: number;
+    falloff: "smooth" | "gaussian" | "sharp";
+  }) => void;
+  endMove?: () => void;
 };
 
 type SelectionRegistry = {

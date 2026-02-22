@@ -10,10 +10,18 @@ export default function MoveSelected({
   requireKey = "g",
   controlsRef,
   mode = "translate",
+  proportionalEnabled: proportionalEnabledProp = true,
+  proportionalRadius = 0.25,
+  falloff = "smooth",
 }: {
   requireKey?: string | null;
   controlsRef?: React.RefObject<{ enabled: boolean } | null>;
   mode?: "translate" | "rotate" | "scale";
+
+  // ✅ new
+  proportionalEnabled?: boolean;
+  proportionalRadius?: number; // world units
+  falloff?: "smooth" | "gaussian" | "sharp";
 }) {
   const { camera, gl } = useThree();
   const registry = useSelectionRegistry();
@@ -22,8 +30,13 @@ export default function MoveSelected({
   const tcRef = useRef<any>(null);
 
   const [enabled, setEnabled] = useState(requireKey == null); // if no key required, always on
+  const [proportionalEnabled, setProportionalEnabled] = useState(
+    proportionalEnabledProp,
+  );
+  const [radiusWorld, setRadiusWorld] = useState(proportionalRadius);
 
   const prevPivotWorld = useRef(new THREE.Vector3());
+  const dragStartPivotWorld = useRef(new THREE.Vector3());
   const tmpV = useMemo(() => new THREE.Vector3(), []);
 
   // --- key handling (toggles visibility/interaction)
@@ -96,14 +109,15 @@ export default function MoveSelected({
     const onObjectChange = () => {
       // Get pivot position in WORLD space
       pivot.getWorldPosition(tmpV);
-      const deltaWorld = tmpV.clone().sub(prevPivotWorld.current);
 
-      if (deltaWorld.lengthSq() === 0) return;
+      const totalDeltaWorld = tmpV.clone().sub(dragStartPivotWorld.current);
+
+      if (totalDeltaWorld.lengthSq() === 0) return;
 
       prevPivotWorld.current.copy(tmpV);
 
       for (const entry of registry.entries()) {
-        entry.moveSelected(deltaWorld);
+        entry.moveSelected(totalDeltaWorld);
       }
     };
 
@@ -112,6 +126,25 @@ export default function MoveSelected({
       if (controlsRef?.current) controlsRef.current.enabled = !isDragging;
       // prevent OrbitControls / pointer conflicts
       gl.domElement.style.cursor = isDragging ? "grabbing" : "default";
+
+      if (isDragging) {
+        pivot.getWorldPosition(tmpV);
+        prevPivotWorld.current.copy(tmpV);
+        dragStartPivotWorld.current.copy(tmpV);
+
+        for (const entry of registry.entries()) {
+          entry.beginMove?.({
+            pivotWorld: tmpV,
+            proportionalEnabled,
+            proportionalRadiusWorld: radiusWorld,
+            falloff,
+          });
+        }
+      } else {
+        for (const entry of registry.entries()) {
+          entry.endMove?.();
+        }
+      }
     };
 
     tc.addEventListener("objectChange", onObjectChange);
@@ -121,7 +154,50 @@ export default function MoveSelected({
       tc.removeEventListener("objectChange", onObjectChange);
       tc.removeEventListener("dragging-changed", onDraggingChanged);
     };
-  }, [enabled, registry, pivot, tmpV, controlsRef, gl]);
+  }, [
+    enabled,
+    registry,
+    pivot,
+    tmpV,
+    controlsRef,
+    gl,
+    proportionalEnabled,
+    radiusWorld,
+    falloff,
+  ]);
+
+  // Toggle proportional editing with "o"
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "o") {
+        setProportionalEnabled((v) => {
+          console.log(!v);
+          return !v;
+        });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Mouse wheel adjusts proportional radius while tool is enabled
+  useEffect(() => {
+    if (!enabled) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!proportionalEnabled) return;
+      e.preventDefault();
+      const dir = Math.sign(e.deltaY);
+      setRadiusWorld((r) => {
+        const next = r * (dir > 0 ? 0.9 : 1.1);
+        console.log(Math.min(Math.max(next, 0.001), 1000));
+        return Math.min(Math.max(next, 0.001), 1000);
+      });
+    };
+
+    window.addEventListener("wheel", onWheel, { passive: false });
+    return () => window.removeEventListener("wheel", onWheel as any);
+  }, [enabled, proportionalEnabled]);
 
   // No selection? no gizmo.
   const hasAnySelection = registry

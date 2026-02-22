@@ -326,6 +326,15 @@ export function SelectableVertices({
   const selectedRef = useRef<number[]>([]);
   const [posVersion, setPosVersion] = useState(0);
 
+  // Drag snapshot for proportional editing
+  const dragStartPositionsRef = useRef<Float32Array | null>(null);
+  const dragPivotLocalRef = useRef(new THREE.Vector3());
+  const dragOptsRef = useRef<{
+    proportionalEnabled: boolean;
+    radiusWorld: number;
+    falloff: "smooth" | "gaussian" | "sharp";
+  } | null>(null);
+
   useEffect(() => {
     selectedRef.current = selectedIndices;
   }, [selectedIndices]);
@@ -397,25 +406,73 @@ export function SelectableVertices({
         const pos = geom.getAttribute("position") as THREE.BufferAttribute;
         if (!pos) return;
 
-        // WORLD delta -> MESH LOCAL delta (direction-only)
-        mesh.updateWorldMatrix(true, false);
-        const inv = new THREE.Matrix4().copy(mesh.matrixWorld).invert();
-        const e = inv.elements;
+        const start = dragStartPositionsRef.current;
+        const opts = dragOptsRef.current;
 
-        const dx = deltaWorld.x,
-          dy = deltaWorld.y,
-          dz = deltaWorld.z;
+        // Fallback: if we missed drag start, behave like before
+        if (!start || !opts || !opts.proportionalEnabled) {
+          const tmp = new THREE.Vector3();
+          for (const i of selectedRef.current) {
+            tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i)).add(deltaWorld);
+            pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
+          }
+        } else {
+          // world->local scale approximation so radius feels consistent in world units
+          const m = mesh.matrixWorld.elements;
+          const sx = Math.hypot(m[0], m[1], m[2]);
+          const sy = Math.hypot(m[4], m[5], m[6]);
+          const sz = Math.hypot(m[8], m[9], m[10]);
+          const sAvg = (sx + sy + sz) / 3;
 
-        const deltaLocal = new THREE.Vector3(
-          e[0] * dx + e[4] * dy + e[8] * dz,
-          e[1] * dx + e[5] * dy + e[9] * dz,
-          e[2] * dx + e[6] * dy + e[10] * dz,
-        );
+          const radiusLocal = opts.radiusWorld / Math.max(sAvg, 1e-8);
+          const rInv = 1 / Math.max(radiusLocal, 1e-8);
 
-        const tmp = new THREE.Vector3();
-        for (const i of selectedRef.current) {
-          tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i)).add(deltaLocal);
-          pos.setXYZ(i, tmp.x, tmp.y, tmp.z);
+          const pivotLocal = dragPivotLocalRef.current;
+          const selSet = new Set<number>(selectedRef.current);
+
+          const falloff = (t: number) => {
+            if (t <= 0) return 1;
+            if (t >= 1) return 0;
+
+            if (opts.falloff === "sharp") {
+              const x = 1 - t;
+              return x * x * x * x;
+            }
+
+            if (opts.falloff === "gaussian") {
+              const sharpness = 3;
+              const a = Math.exp(-sharpness * t * t);
+              const edge = Math.exp(-sharpness);
+              return (a - edge) / (1 - edge); // normalized to hit 0 at edge
+            }
+
+            // smooth (default)
+            const x = 1 - t;
+            return x * x * (3 - 2 * x);
+          };
+
+          const arr = pos.array as Float32Array;
+
+          for (let i = 0; i < pos.count; i++) {
+            const ix = i * 3;
+            const sx0 = start[ix + 0];
+            const sy0 = start[ix + 1];
+            const sz0 = start[ix + 2];
+
+            let w = selSet.has(i) ? 1 : 0;
+
+            if (w === 0) {
+              const vx = sx0 - pivotLocal.x;
+              const vy = sy0 - pivotLocal.y;
+              const vz = sz0 - pivotLocal.z;
+              const d = Math.sqrt(vx * vx + vy * vy + vz * vz);
+              if (d < radiusLocal) w = falloff(d * rInv);
+            }
+
+            arr[ix + 0] = sx0 + deltaWorld.x * w;
+            arr[ix + 1] = sy0 + deltaWorld.y * w;
+            arr[ix + 2] = sz0 + deltaWorld.z * w;
+          }
         }
 
         pos.needsUpdate = true;
@@ -424,6 +481,40 @@ export function SelectableVertices({
         geom.computeVertexNormals();
 
         setPosVersion((v) => v + 1);
+      },
+      beginMove: ({
+        pivotWorld,
+        proportionalEnabled,
+        proportionalRadiusWorld,
+        falloff,
+      }) => {
+        const geom = mesh.geometry as THREE.BufferGeometry;
+        const pos = geom.getAttribute("position") as THREE.BufferAttribute;
+        if (!pos) return;
+
+        // snapshot starting positions
+        dragStartPositionsRef.current = (pos.array as Float32Array).slice();
+
+        // pivot in local space (stable for distance checks)
+        mesh.updateWorldMatrix(true, false);
+        const pivotLocal = pivotWorld.clone();
+        mesh.worldToLocal(pivotLocal);
+        dragPivotLocalRef.current.copy(pivotLocal);
+
+        dragOptsRef.current = {
+          proportionalEnabled,
+          radiusWorld: proportionalRadiusWorld,
+          falloff,
+        };
+      },
+
+      endMove: () => {
+        // finalize shading once per drag
+        const geom = mesh.geometry as THREE.BufferGeometry;
+        geom.computeVertexNormals();
+
+        dragStartPositionsRef.current = null;
+        dragOptsRef.current = null;
       },
     });
 
