@@ -20,6 +20,7 @@ import { SelectionProvider, useSelectionRegistry } from "./hooks/selection";
 import BoxSelect from "./components/box-select";
 import MoveSelected from "./components/move-selected";
 import { SelectableVertices } from "./components/selectable-vertices";
+import { useKeyHeld } from "./hooks/useKeyHeld";
 
 type LoadedRoot = THREE.Object3D | null;
 
@@ -319,6 +320,7 @@ function ViewerCanvas({
   onRoot?: (root: THREE.Object3D | null) => void;
 }) {
   const registry = useSelectionRegistry();
+  const gHeld = useKeyHeld("g");
 
   return (
     <Canvas
@@ -340,7 +342,7 @@ function ViewerCanvas({
         raycaster.params.Points.threshold = 0.02;
       }}
       onPointerMissed={() => {
-        registry.clearAllSelections();
+        if (!gHeld) registry.clearAllSelections();
       }}
     >
       <PerspectiveCamera
