@@ -14,6 +14,7 @@ import {
   Center,
 } from "@react-three/drei";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { SelectionProvider, useSelectionRegistry } from "./hooks/selection";
 import BoxSelect from "./components/box-select";
 import MoveSelected from "./components/move-selected";
@@ -25,6 +26,7 @@ export default function Viewer() {
   const [fileName, setFileName] = useState<string>("");
   const orbitRef = useRef<any>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const loadedRootRef = useRef<THREE.Object3D | null>(null);
 
   // Drag & drop handler
   useEffect(() => {
@@ -58,6 +60,114 @@ export default function Viewer() {
     };
   }, []);
 
+  function downloadDeformedMesh() {
+    const root = loadedRootRef.current;
+    if (!root) return;
+
+    // Ensure matrices are up to date (important before baking)
+    root.updateWorldMatrix(true, true);
+
+    // Collect ONLY meshes from the loaded GLTF root
+    const exportGroup = new THREE.Group();
+    exportGroup.name = "deformed";
+
+    root.traverse((obj) => {
+      const anyObj = obj as any;
+
+      if (anyObj.isMesh || anyObj.isSkinnedMesh) {
+        const mesh = obj as THREE.Mesh;
+
+        // Clone geometry so we export the deformed state
+        const srcGeom = mesh.geometry as THREE.BufferGeometry | undefined;
+        if (!srcGeom?.attributes?.position) return;
+
+        const isSkinned = (mesh as any).isSkinnedMesh === true;
+
+        // IMPORTANT:
+        // - For regular Mesh: bake world transform into geometry so exported file matches what you see
+        // - For SkinnedMesh: baking like this usually breaks skinning. We export it without baking.
+        const geom = srcGeom.clone();
+
+        if (!isSkinned) {
+          geom.applyMatrix4(mesh.matrixWorld);
+        }
+
+        // Materials: keep as-is (clone optional)
+        const mat = Array.isArray(mesh.material)
+          ? mesh.material.map((m) => m.clone())
+          : mesh.material.clone();
+
+        const outMesh = new THREE.Mesh(geom, mat);
+        outMesh.name = mesh.name || "mesh";
+
+        // If not baked (skinned), preserve transform; if baked, identity is correct
+        if (isSkinned) {
+          outMesh.position.copy(mesh.getWorldPosition(new THREE.Vector3()));
+          outMesh.quaternion.copy(
+            mesh.getWorldQuaternion(new THREE.Quaternion()),
+          );
+          outMesh.scale.copy(mesh.getWorldScale(new THREE.Vector3()));
+        } else {
+          outMesh.position.set(0, 0, 0);
+          outMesh.quaternion.identity();
+          outMesh.scale.set(1, 1, 1);
+        }
+
+        // Copy a couple useful flags
+        outMesh.castShadow = false;
+        outMesh.receiveShadow = false;
+
+        exportGroup.add(outMesh);
+      }
+    });
+
+    // Export to GLB
+    const exporter = new GLTFExporter();
+    exporter.parse(
+      exportGroup,
+      (result) => {
+        const base =
+          (fileName?.replace(/\.(glb|gltf)$/i, "") || "model") +
+          "_deformed.glb";
+
+        if (result instanceof ArrayBuffer) {
+          const blob = new Blob([result], { type: "model/gltf-binary" });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = base;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+
+          URL.revokeObjectURL(url);
+        } else {
+          // (Shouldn't happen because we request binary: true)
+          const json = JSON.stringify(result);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = base.replace(/\.glb$/i, ".gltf");
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+
+          URL.revokeObjectURL(url);
+        }
+      },
+      (err) => console.error("GLTF export error:", err),
+      {
+        binary: true,
+        // embedImages: true, // optional
+        // onlyVisible: true, // optional
+        // truncateDrawRange: true, // optional
+      },
+    );
+  }
+
   return (
     <div style={{ width: "100%", height: "100vh", background: "#2b2b2b" }}>
       {/* HUD */}
@@ -68,6 +178,16 @@ export default function Viewer() {
         <span className="block opacity-80">
           {fileUrl ? `loaded: ${fileName}` : "no model loaded yet"}
         </span>
+
+        {fileUrl && (
+          <button
+            className="mt-2 px-3 py-1 rounded bg-white/15 hover:bg-white/25 disabled:opacity-40"
+            onClick={downloadDeformedMesh}
+            type="button"
+          >
+            download deformed mesh (.glb)
+          </button>
+        )}
       </div>
 
       <div
@@ -139,7 +259,14 @@ export default function Viewer() {
           <Environment preset="studio" intensity={0.7} />
 
           <Center position={[0, 0.9, 0]}>
-            {fileUrl && <DroppedModel url={fileUrl} />}
+            {fileUrl && (
+              <DroppedModel
+                url={fileUrl}
+                onRoot={(r) => {
+                  loadedRootRef.current = r;
+                }}
+              />
+            )}
           </Center>
 
           <OrbitControls
@@ -197,7 +324,13 @@ function Lights() {
   );
 }
 
-function DroppedModel({ url }: { url: string }) {
+function DroppedModel({
+  url,
+  onRoot,
+}: {
+  url: string;
+  onRoot?: (root: THREE.Object3D | null) => void;
+}) {
   const loader = useMemo(() => new GLTFLoader(), []);
   const [root, setRoot] = useState<LoadedRoot>(null);
 
@@ -221,6 +354,7 @@ function DroppedModel({ url }: { url: string }) {
 
         fitToUnit(scene, 1.6);
         setRoot(scene);
+        onRoot?.(scene);
       },
       undefined,
       (err) => console.error("GLTF load error:", err),
@@ -228,8 +362,9 @@ function DroppedModel({ url }: { url: string }) {
 
     return () => {
       cancelled = true;
+      onRoot?.(null);
     };
-  }, [url, loader]);
+  }, [url, loader, onRoot]);
 
   const meshes = useMemo(() => {
     if (!root) return [];
