@@ -15,6 +15,7 @@ A browser-based Three.js application where a user can:
 - Export the deformed mesh as a GLB file
 
 ## Demo
+<video src="https://github.com/user-attachments/assets/fb3034d7-903e-4981-8d02-d438910bd3c2"></video>
 
 ## How to use the app
 
