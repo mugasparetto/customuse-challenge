@@ -11,6 +11,8 @@ import {
   applyProportionalMove,
 } from "../helpers/vertex-edit";
 
+import { useKeyHeld } from "../hooks/useKeyHeld";
+
 type SVProps = {
   mesh: THREE.Mesh;
   pointSize?: number;
@@ -39,6 +41,8 @@ export function SelectableVertices({
     radiusWorld: number;
     falloff: "smooth" | "gaussian" | "sharp";
   } | null>(null);
+
+  const gHeld = useKeyHeld("g");
 
   useEffect(() => {
     selectedRef.current = selectedIndices;
@@ -196,6 +200,7 @@ export function SelectableVertices({
 
   // 6) click to select
   const onPointerDown = (e: ThreeEvent<PointerEvent>) => {
+    if (gHeld) return;
     if (e.nativeEvent.button !== 0) return;
     e.stopPropagation();
 

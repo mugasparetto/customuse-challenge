@@ -3,7 +3,8 @@
 import React, { useEffect, useRef } from "react";
 import { useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { useSelectionRegistry } from "../hooks/selection"; // adjust
+import { useSelectionRegistry } from "../hooks/selection";
+import { useKeyHeld } from "../hooks/useKeyHeld";
 
 export default function BoxSelect({
   controlsRef,
@@ -21,6 +22,8 @@ export default function BoxSelect({
   const keyDownRef = useRef(false);
   const boxElRef = useRef<HTMLDivElement | null>(null);
   const baseRectRef = useRef<DOMRect | null>(null);
+
+  const gHeld = useKeyHeld("g");
 
   // Create the DOM rectangle once
   useEffect(() => {
@@ -87,6 +90,7 @@ export default function BoxSelect({
     };
 
     const onDown = (ev: PointerEvent) => {
+      if (gHeld) return;
       if (ev.button !== 0) return;
       if (requireKey && !keyDownRef.current) return;
 
@@ -103,6 +107,7 @@ export default function BoxSelect({
     };
 
     const onMove = (ev: PointerEvent) => {
+      if (gHeld) return;
       if (!startRef.current) return;
 
       const p = getMouse(ev);
