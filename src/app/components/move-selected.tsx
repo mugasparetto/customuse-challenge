@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useThree } from "@react-three/fiber";
+import { useThree, useFrame } from "@react-three/fiber";
 import { TransformControls } from "@react-three/drei";
 import * as THREE from "three";
 import { useSelectionRegistry } from "../hooks/selection";
@@ -38,6 +38,21 @@ export default function MoveSelected({
   const prevPivotWorld = useRef(new THREE.Vector3());
   const dragStartPivotWorld = useRef(new THREE.Vector3());
   const tmpV = useMemo(() => new THREE.Vector3(), []);
+  const radiusVizRef = useRef<THREE.Mesh | null>(null);
+
+  useFrame(() => {
+    const m = radiusVizRef.current;
+    if (!m) return;
+
+    const show = enabled && proportionalEnabled; // ✅ only when G is down and proportional is on
+    m.visible = show;
+    if (!show) return;
+
+    pivot.getWorldPosition(tmpV);
+    m.position.copy(tmpV);
+    m.quaternion.copy(camera.quaternion); // billboard-facing
+    m.scale.setScalar(radiusWorld); // scale to radius (world units)
+  });
 
   // --- key handling (toggles visibility/interaction)
   useEffect(() => {
@@ -210,6 +225,22 @@ export default function MoveSelected({
     <>
       {/* pivot must be in the scene graph for TransformControls to work */}
       <primitive object={pivot} />
+
+      <mesh
+        ref={radiusVizRef}
+        raycast={() => null} // don’t interfere with clicking
+        renderOrder={10}
+        visible={false}
+        onUpdate={(o) => o.layers.set(1)} // layer 1 (raycaster is layer 0)
+      >
+        <ringGeometry args={[0.98, 1.0, 96]} />
+        <meshBasicMaterial
+          color="#ffffff"
+          transparent
+          opacity={0.25}
+          depthTest={false}
+        />
+      </mesh>
 
       <TransformControls
         ref={tcRef}
