@@ -21,11 +21,15 @@ type PointsEntry = {
     falloff: "smooth" | "gaussian" | "sharp";
   }) => void;
   endMove?: () => void;
+
+  // clear selection (used by page / tools)
+  clearSelection?: () => void;
 };
 
 type SelectionRegistry = {
   register: (entry: PointsEntry) => () => void;
   entries: () => PointsEntry[];
+  clearAllSelections: () => void;
 };
 
 const SelectionContext = createContext<SelectionRegistry | null>(null);
@@ -40,6 +44,11 @@ export function SelectionProvider({ children }: { children: React.ReactNode }) {
         return () => mapRef.current.delete(entry.id);
       },
       entries: () => Array.from(mapRef.current.values()),
+      clearAllSelections: () => {
+        for (const entry of mapRef.current.values()) {
+          entry.clearSelection?.();
+        }
+      },
     };
   }, []);
 

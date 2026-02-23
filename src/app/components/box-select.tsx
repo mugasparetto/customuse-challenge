@@ -117,7 +117,8 @@ export default function BoxSelect({
     };
 
     const onUp = () => {
-      if (!startRef.current) return;
+      const start = startRef.current;
+      if (!start) return;
 
       // read final box from styles
       const left = parseFloat(boxEl.style.left || "0");
@@ -125,12 +126,21 @@ export default function BoxSelect({
       const w = parseFloat(boxEl.style.width || "0");
       const h = parseFloat(boxEl.style.height || "0");
 
-      startRef.current = null;
-      baseRectRef.current = null;
-      clearBox();
+      // capture base rect once (prevents drift if layout/scroll changes)
+      const r =
+        baseRectRef.current ??
+        overlayRef.current?.getBoundingClientRect() ??
+        gl.domElement.getBoundingClientRect();
 
+      startRef.current = null;
+      clearBox();
       if (controlsRef?.current) controlsRef.current.enabled = true;
-      if (w < 2 || h < 2) return;
+
+      // drop zero-sized drags
+      if (!r || w < 2 || h < 2) {
+        baseRectRef.current = null;
+        return;
+      }
 
       const right = left + w;
       const bottom = top + h;
@@ -145,13 +155,8 @@ export default function BoxSelect({
         const picked: number[] = [];
         for (let i = 0; i < pos.count; i++) {
           tmp.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-          tmp.applyMatrix4(entry.points.matrixWorld); // <-- important
+          tmp.applyMatrix4(entry.points.matrixWorld); // convert to world
           tmp.project(camera);
-
-          const r =
-            baseRectRef.current ??
-            overlayRef.current?.getBoundingClientRect() ??
-            gl.domElement.getBoundingClientRect();
 
           const sx = (tmp.x * 0.5 + 0.5) * r.width;
           const sy = (-tmp.y * 0.5 + 0.5) * r.height;
@@ -162,6 +167,9 @@ export default function BoxSelect({
 
         entry.setSelected(picked);
       }
+
+      // clear after selection is computed
+      baseRectRef.current = null;
     };
 
     canvasEl.addEventListener("pointerdown", onDown);

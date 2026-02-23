@@ -35,7 +35,6 @@ export default function MoveSelected({
   );
   const [radiusWorld, setRadiusWorld] = useState(proportionalRadius);
 
-  const prevPivotWorld = useRef(new THREE.Vector3());
   const dragStartPivotWorld = useRef(new THREE.Vector3());
   const tmpV = useMemo(() => new THREE.Vector3(), []);
   const radiusVizRef = useRef<THREE.Mesh | null>(null);
@@ -109,7 +108,6 @@ export default function MoveSelected({
     if (!center) return;
 
     pivot.position.copy(center);
-    prevPivotWorld.current.copy(center);
 
     // Force transform controls to refresh
     tcRef.current?.update?.();
@@ -129,8 +127,6 @@ export default function MoveSelected({
 
       if (totalDeltaWorld.lengthSq() === 0) return;
 
-      prevPivotWorld.current.copy(tmpV);
-
       for (const entry of registry.entries()) {
         entry.moveSelected(totalDeltaWorld);
       }
@@ -144,7 +140,6 @@ export default function MoveSelected({
 
       if (isDragging) {
         pivot.getWorldPosition(tmpV);
-        prevPivotWorld.current.copy(tmpV);
         dragStartPivotWorld.current.copy(tmpV);
 
         for (const entry of registry.entries()) {
@@ -186,7 +181,6 @@ export default function MoveSelected({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "o") {
         setProportionalEnabled((v) => {
-          console.log(!v);
           return !v;
         });
       }
@@ -205,7 +199,6 @@ export default function MoveSelected({
       const dir = Math.sign(e.deltaY);
       setRadiusWorld((r) => {
         const next = r * (dir > 0 ? 0.9 : 1.1);
-        console.log(Math.min(Math.max(next, 0.001), 1000));
         return Math.min(Math.max(next, 0.001), 1000);
       });
     };
